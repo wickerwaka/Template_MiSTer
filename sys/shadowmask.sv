@@ -17,10 +17,6 @@ module shadowmask
 );
 
 
-//These are unused right now
-parameter MaxPatternWidth = 8;
-parameter MaxPatternHeight = 4;
-
 reg [3:0] hcount;
 reg [3:0] vcount;
 
@@ -37,9 +33,11 @@ reg [2:0] vindex2;
 reg mask_2x;
 reg mask_rotate;
 reg mask_enable;
+reg [1:0][2:0] on_intensity;
+reg [1:0][3:0] off_intensity;
+reg [3:0] mask_lut[64];
 
 always @(posedge clk) begin
-
     reg old_hs, old_vs;
     old_hs <= hs_in;
     old_vs <= vs_in;
@@ -71,74 +69,74 @@ end
 wire [7:0] r,g,b;
 assign {r,g,b} = din;
 
-reg [23:0] d;
-
-// Each element of mask_lut is 3 bits. 1 each for R,G,B
-// Red   is   100 = 4
-// Green is   010 = 2
-// Blue  is   001 = 1
-// Magenta is 101 = 5
-// Gray is    000 = 0
-// White is   111 = 7
-// Yellow is  110 = 6
-// Cyan is    011 = 3
-
-// So the Pattern
-// r,r,g,g,b,b
-// r,r,g,g,b,b
-// g,b,b,r,r,g
-// g,b,b,r,r,g
-//
-// is
-// 4,4,2,2,1,1,5,3
-// 4,4,2,2,1,1,0,0,
-// 2,1,1,4,4,2,0,0
-// 2,1,1,4,4,2,0,0
-//
-// note that all rows are padded to 8 numbers although every pattern is 6 pixels wide
-// The last two entries of the top row "5,3" are the size of the mask. In this case
-// "5,3," means this pattern is 6x4 pixels.
-
 reg m_enable;
 always @(posedge clk) m_enable <= mask_enable & enable;
 
-reg [2:0] mask_lut[64];
-
 always @(posedge clk) begin
+    reg [3:0] lut;
+    reg [2:0] vid1, vid2, vid3, vid4;
 
-    reg rbit, gbit, bbit;
-    reg [23:0] dout1, dout2;
-    reg de1,de2,vs1,vs2,hs1,hs2;
-    reg [8:0] r2, g2, b2; //9 bits to handle overflow when we add to bright colors.
-    reg [8:0] r3, g3, b3; //These are the final colors.
+    // 00001 = 6.25%, 00010 = 12.5%, 00100 = 25%, 01000 = 50%, 10000 = 100%
+    // 50% and 100% are mutually exclusive, 100% takes priority
+    reg [4:0] r_ops, g_ops, b_ops;
 
-    {rbit,gbit, bbit} = mask_lut[{vindex2[2:0],hindex2[2:0]}];
+    reg [7:0] r1, g1, b1;
+    reg [7:0] r2, g2, b2;
+    reg [8:0] r4, g4, b4; // 9 bits to handle overflow when we add to bright colors.
+    reg [7:0] r3_x, g3_x, b3_x; // only 8 bits needed
+    reg [8:0] r3_y, g3_y, b3_y; // 9 bits since this can be > 100%
 
-    r2 <= r;
-    g2 <= g;
-    b2 <= b;
+    // C1 - load LUT and color data
+    lut <= mask_lut[{vindex2[2:0],hindex2[2:0]}];
+    {r1,g1,b1} <= {r,g,b};
+    vid1 <= {vs_in, hs_in, de_in};
 
-    // I add 12.5% of the Color value and then subrtact 50% if the mask should be dark
-    r3 <= r2 + (~m_enable ? 9'd0: {3'b0, r2[8:3]}) - ((~m_enable | rbit) ?  9'b0 : {1'b0, r2[8:1]});
-    g3 <= g2 + (~m_enable ? 9'd0: {3'b0, g2[8:3]}) - ((~m_enable | gbit) ?  9'b0 : {1'b0, g2[8:1]});
-    b3 <= b2 + (~m_enable ? 9'd0: {3'b0, b2[8:3]}) - ((~m_enable | bbit) ?  9'b0 : {1'b0, b2[8:1]});
+    // C2 - convert lut info into addition selector
+    if (m_enable) begin
+        r_ops <= lut[2] ? {2'b10,on_intensity[lut[3]]} : {1'b0,off_intensity[lut[3]]};
+        g_ops <= lut[1] ? {2'b10,on_intensity[lut[3]]} : {1'b0,off_intensity[lut[3]]};
+        b_ops <= lut[0] ? {2'b10,on_intensity[lut[3]]} : {1'b0,off_intensity[lut[3]]};
+    end else begin
+        r_ops <= 5'b10000; g_ops <= 5'b10000; b_ops <= 5'b10000; // just apply 100% to all channels
+    end
 
-    // Because a pixel can be brighter than 255 we have to clamp the value to 255.
-    dout <= {{8{r3[8]}} | r3[7:0], {8{g3[8]}} | g3[7:0], {8{b3[8]}} | b3[7:0]};
+    vid2 <= vid1;
+    {r2,g2,b2} <= {r1,g1,b1};
 
-    vs_out <= vs2;   vs2 <= vs1;   vs1 <= vs_in;
-    hs_out <= hs2;   hs2 <= hs1;   hs1 <= hs_in;
-    de_out <= de2;   de2 <= de1;   de1 <= de_in;
+    // C3 - perform first level of additions based on ops registers
+    r3_x <= ( r_ops[0] ? 8'(r2[7:4]) : 8'b0 ) + ( r_ops[1] ? 8'(r2[7:3]) : 8'b0 ); // 6.25% + 12.5%
+    r3_y <= ( r_ops[2] ? 9'(r2[7:2]) : 9'b0 ) + ( r_ops[4] ? 9'(r2) : ( r_ops[3] ? 9'(r2[7:1]) : 9'b0 ) ); // 25% + ( 50% OR 100% )
+
+    g3_x <= ( g_ops[0] ? 8'(g2[7:4]) : 8'b0 ) + ( g_ops[1] ? 8'(g2[7:3]) : 8'b0 );
+    g3_y <= ( g_ops[2] ? 9'(g2[7:2]) : 9'b0 ) + ( g_ops[4] ? 9'(g2) : ( g_ops[3] ? 9'(g2[7:1]) : 9'b0 ) );
+
+    b3_x <= ( b_ops[0] ? 8'(b2[7:4]) : 8'b0 ) + ( b_ops[1] ? 8'(b2[7:3]) : 8'b0 );
+    b3_y <= ( b_ops[2] ? 9'(b2[7:2]) : 9'b0 ) + ( b_ops[4] ? 9'(b2) : ( b_ops[3] ? 9'(b2[7:1]) : 9'b0 ) );
+
+    vid3 <= vid2;
+
+    // C4 - combine results
+    r4 <= 9'(r3_x) + 9'(r3_y);
+    g4 <= 9'(g3_x) + 9'(g3_y);
+    b4 <= 9'(b3_x) + 9'(b3_y);
+
+    vid4 <= vid3;
+
+    // C5 - clamp and pack
+    dout <= {{8{r4[8]}} | r4[7:0], {8{g4[8]}} | g4[7:0], {8{b4[8]}} | b4[7:0]};
+    {vs_out,hs_out,de_out} <= vid4;
 end
 
-// 000_000_000_000_000_
+// clock in mask commands
 always @(posedge clk_sys) begin
     if (cmd_wr) begin
         case(cmd_in[15:13])
         3'b000: {mask_rotate, mask_2x, mask_enable} <= cmd_in[2:0];
         3'b001: vmax <= cmd_in[3:0];
         3'b010: hmax <= cmd_in[3:0];
-        3'b011: mask_lut[cmd_in[9:4]] <= cmd_in[2:0];
+        3'b011: mask_lut[cmd_in[9:4]] <= cmd_in[3:0];
+        3'b100: on_intensity[cmd_in[4]] <= cmd_in[2:0];
+        3'b101: off_intensity[cmd_in[4]] <= cmd_in[3:0];
         endcase
     end
 end
