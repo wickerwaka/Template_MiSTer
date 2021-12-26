@@ -295,7 +295,7 @@ reg [31:0] cfg_custom_p2;
 reg  [4:0] vol_att;
 initial vol_att = 5'b11111;
 
-reg  [8:0] coef_addr;
+reg  [12:0] coef_addr;
 reg  [8:0] coef_data;
 reg        coef_wr = 0;
 
@@ -424,7 +424,7 @@ always@(posedge clk_sys) begin
 			if(cmd == 'h27) VSET <= io_din[11:0];
 			if(cmd == 'h2A) begin
 				if(cnt[0]) {coef_wr,coef_data} <= {1'b1,io_din[8:0]};
-				else coef_addr <= io_din[8:0];
+				else coef_addr <= io_din[12:0];
 			end
 			if(cmd == 'h2B) scaler_flt <= io_din[2:0];
 			if(cmd == 'h37) {FREESCALE,HSET} <= {io_din[15],io_din[11:0]};
