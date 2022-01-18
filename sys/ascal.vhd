@@ -486,7 +486,6 @@ ARCHITECTURE rtl OF ascal IS
   SIGNAL o_hpixs,o_hpix0,o_hpix1,o_hpix2,o_hpix3 : type_pix;
   SIGNAL o_hpixq,o_hpixq1,o_hpixq2,o_hpixq3,o_hpixq4 : arr_pix(0 TO 3);
   SIGNAL o_vpixq,o_vpixq1,o_vpixq2,o_vpixq3,o_vpixq4,o_vpixq5 : arr_pix(0 TO 3);
-  SIGNAL o_hlum0,o_hlum1,o_hlum2 : UNSIGNED(7 DOWNTO 0);
   
   
   SIGNAL o_vpe : std_logic;
@@ -1008,7 +1007,7 @@ ARCHITECTURE rtl OF ascal IS
   SIGNAL poly_tdw : unsigned(35 DOWNTO 0);
   SIGNAL poly_a2 : unsigned(FRAC-1 DOWNTO 0);
   SIGNAL o_v_poly_lum, o_h_poly_lum, o_poly_lum : unsigned(7 DOWNTO 0);
-  SIGNAL o_poly_lum2 : type_lum_t;
+  SIGNAL o_poly_lerp_ta, o_poly_lerp_tb : signed(9 DOWNTO 0);
   SIGNAL o_h_poly_t,o_v_poly_t   : type_poly_t;
 
   
@@ -1056,15 +1055,16 @@ ARCHITECTURE rtl OF ascal IS
   -- 4 DSP 18*18 + 18*18
   FUNCTION poly_lerp(a : poly_phase_t;
                      b : poly_phase_t;
-                     t : type_lum_t) RETURN poly_phase_interp_t IS
+                     ta : SIGNED(9 DOWNTO 0);
+                     tb : SIGNED(9 DOWNTO 0)) RETURN poly_phase_interp_t IS
     VARIABLE v : poly_phase_interp_t;
     VARIABLE t0,t1,t2,t3 : signed(18 DOWNTO 0);
   BEGIN
     -- 2.7 * 2.8 = 4.15
-    t0 := (a.t0 * t.a) + (b.t0 * t.b);
-    t1 := (a.t1 * t.a) + (b.t1 * t.b);
-    t2 := (a.t2 * t.a) + (b.t2 * t.b);
-    t3 := (a.t3 * t.a) + (b.t3 * t.b);
+    t0 := (a.t0 * ta) + (b.t0 * tb);
+    t1 := (a.t1 * ta) + (b.t1 * tb);
+    t2 := (a.t2 * ta) + (b.t2 * tb);
+    t3 := (a.t3 * ta) + (b.t3 * tb);
 	 
 	  -- 4.15 -> 3.15
 	  v.t0 := t0(17 DOWNTO 0);
@@ -1085,6 +1085,7 @@ ARCHITECTURE rtl OF ascal IS
     RETURN v;
   END FUNCTION;
 
+  -- Nearest neighbor polyphase ceoffs
   FUNCTION poly_nn(frac : unsigned(FRAC-1 DOWNTO 0)) RETURN poly_phase_t IS
     VARIABLE v : poly_phase_t;
   BEGIN
@@ -1114,17 +1115,6 @@ ARCHITECTURE rtl OF ascal IS
     
     RETURN v;
   END FUNCTION;
-
-  FUNCTION poly_lum_complement(b : UNSIGNED(7 DOWNTO 0)) RETURN type_lum_t IS
-    VARIABLE v : UNSIGNED(9 DOWNTO 0);
-    VARIABLE l : type_lum_t;
-  BEGIN
-    v := "00" & b;
-    l.a := signed(to_unsigned(256,10) - v);
-    l.b := signed(v);
-    RETURN l;
-  END FUNCTION;
-
 BEGIN
   
   -----------------------------------------------------------------------------
@@ -1388,11 +1378,12 @@ BEGIN
         -- C4 : Horizontal Bilinear
         IF i_bil='0' THEN
           frac_v:=near_frac(i_h_frac);
+          i_h_bil_t<=near_calc(frac_v,(i_hpix2,i_hpix2,i_hpix3,i_hpix3));
         ELSE
           frac_v:=bil_frac(i_h_frac);
+          i_h_bil_t<=bil_calc(frac_v,(i_hpix2,i_hpix2,i_hpix3,i_hpix3));
         END IF;
         
-        i_h_bil_t<=bil_calc(frac_v,(i_hpix2,i_hpix2,i_hpix3,i_hpix3));
         i_hpix.r<=bound(i_h_bil_t.r,8+FRAC);
         i_hpix.g<=bound(i_h_bil_t.g,8+FRAC);
         i_hpix.b<=bound(i_h_bil_t.b,8+FRAC);
@@ -1404,11 +1395,12 @@ BEGIN
         -- C5 : Vertical Bilinear
         IF i_bil='0' THEN
           frac_v:=near_frac(i_v_frac(11 DOWNTO 0));
+          bil_t_v:=near_calc(frac_v,(i_hpix,i_hpix,i_ldrm,i_ldrm));
         ELSE
           frac_v:=bil_frac(i_v_frac(11 DOWNTO 0));
+          bil_t_v:=bil_calc(frac_v,(i_hpix,i_hpix,i_ldrm,i_ldrm));
         END IF;
         
-        bil_t_v:=bil_calc(frac_v,(i_hpix,i_hpix,i_ldrm,i_ldrm));
         i_pix.r<=bound(bil_t_v.r,8+FRAC);
         i_pix.g<=bound(bil_t_v.g,8+FRAC);
         i_pix.b<=bound(bil_t_v.b,8+FRAC);
@@ -1834,11 +1826,10 @@ BEGIN
     VARIABLE prim_v,last_v,bib_v : std_logic;
     VARIABLE shift_v : unsigned(0 TO N_DW+15);
     VARIABLE hpix_v : type_pix;
-    VARIABLE hlum_v : UNSIGNED(7 DOWNTO 0);
     VARIABLE hcarry_v,vcarry_v : boolean;
     VARIABLE dif_v : natural RANGE 0 TO 8*OHRES-1;
     VARIABLE off_v : natural RANGE 0 TO 15;
- BEGIN
+  BEGIN
     IF o_reset_na='0' THEN
       o_copy<=sWAIT;
       o_state<=sDISP;
@@ -1939,7 +1930,14 @@ BEGIN
         o_vdown<='0';
       END IF;
       
-      o_ihsize_temp <= o_ihsize * to_integer(o_format(2 DOWNTO 0) - 2);
+      -- 011=8bpp(palette) 100=16bpp 101=24bpp 110=32bpp
+      CASE o_format(2 DOWNTO 0) IS
+        WHEN "011" => o_ihsize_temp <= o_ihsize;
+        WHEN "100" => o_ihsize_temp <= o_ihsize * 2;
+        WHEN "110" => o_ihsize_temp <= o_ihsize * 4;
+        WHEN OTHERS => o_ihsize_temp <= o_ihsize * 3;
+      END CASE;
+
       o_ihsize_temp2 <= (o_ihsize_temp + N_BURST - 1);
       o_hburst <= o_ihsize_temp2 / N_BURST;
       
@@ -2229,24 +2227,15 @@ BEGIN
         o_hpix2<=o_hpix1;
         o_hpix3<=o_hpix2;
 
-        hlum_v:=poly_lum(hpix_v);
-
-        o_hlum0<=hlum_v;
-        o_hlum1<=o_hlum0;
-        o_hlum2<=o_hlum1;
-
         IF o_first='1' THEN
           -- Left edge. Duplicate first pixel
           o_hpix1<=hpix_v;
           o_hpix2<=hpix_v;
-          o_hlum1<=hlum_v;
-          o_hlum2<=hlum_v;
           o_first<='0';
         END IF;
         IF o_lastt4='1' THEN
           -- Right edge. Keep last pixel.
           o_hpix0<=o_hpix0;
-          o_hlum0<=o_hlum0;
         END IF;
       END IF;
       
@@ -2317,7 +2306,7 @@ BEGIN
       IF o_vmode(2 DOWNTO 0)="000" THEN -- Nearest neighbor
         o_v_poly_origin<=poly_nn(vfrac_v);
         IF o_v_poly_adaptive = '1' THEN
-		    o_poly_lum<=(OTHERS=>'0');
+          o_poly_lum<=(OTHERS=>'0');
         END IF;
       ELSE -- Polyphase
         o_v_poly_origin<=poly_unpack(o_v_poly_mem(o_v_poly_addr));
@@ -2344,7 +2333,9 @@ BEGIN
       o_h_poly_origin2<=o_h_poly_origin;
       o_v_poly_origin2<=o_v_poly_origin;
       o_poly_adaptive2<=o_poly_adaptive;
-      o_poly_lum2<=poly_lum_complement(o_poly_lum);
+
+      o_poly_lerp_ta<=signed(to_unsigned(256,10) - resize(o_poly_lum,10));
+      o_poly_lerp_tb<=signed(resize(o_poly_lum,10));
 
       IF o_v_poly_adaptive = '1' THEN
         o_poly_origin<=o_v_poly_origin;
@@ -2353,7 +2344,7 @@ BEGIN
       END IF;
 
       -- C3 / HC5 / VC6
-      o_poly_phase<=poly_lerp(o_poly_origin, o_poly_adaptive2, o_poly_lum2);
+      o_poly_phase<=poly_lerp(o_poly_origin, o_poly_adaptive2, o_poly_lerp_ta, o_poly_lerp_tb);
       o_h_poly_origin3<=o_h_poly_origin2;
       o_v_poly_origin3<=o_v_poly_origin2;
 
@@ -2451,7 +2442,7 @@ BEGIN
   HSCAL:PROCESS(o_clk) IS
     VARIABLE div_v : unsigned(18 DOWNTO 0);
     VARIABLE dir_v : unsigned(11 DOWNTO 0);
-    VARIABLE lum_v : unsigned(7 DOWNTO 0);
+    VARIABLE hlumpix_v : type_pix;
   BEGIN
     IF rising_edge(o_clk) THEN
       -- Pipeline signals
@@ -2573,11 +2564,13 @@ BEGIN
       
       -- POLYPHASE -----------------------------------------
       -- C2 : Scale based on luminance
-      IF o_hfrac(2)(o_hfrac(2)'left) = '1' THEN
-        o_h_poly_lum<=o_hlum1;
+      IF o_hfrac(2)(o_hfrac(2)'left)='0' THEN
+        hlumpix_v := o_hpixq(1);
       ELSE
-        o_h_poly_lum<=o_hlum2;
+        hlumpix_v := o_hpixq(2);
       END IF;
+
+      o_h_poly_lum<=poly_lum(hlumpix_v);
 
       -- C7 : Apply Polyphase
       o_h_poly_t<=poly_calc(o_h_poly_phase,o_hpixq4);
