@@ -81,8 +81,8 @@ USE ieee.numeric_std.ALL;
 -- 010 : Sharp Bilinear
 -- 011 : Bicubic
 -- 100 : Polyphase
--- 101 : Polyphase Horizontal Adaptive
--- 110 : Polyphase Vertical Adaptive
+-- 101 : TBD
+-- 110 : TBD
 -- 111 : TBD
 
 -- MODE[3]
@@ -995,11 +995,10 @@ ARCHITECTURE rtl OF ascal IS
   ATTRIBUTE ramstyle OF o_v_poly_mem : SIGNAL IS "no_rw_check";
   ATTRIBUTE ramstyle OF o_a_poly_mem : SIGNAL IS "no_rw_check";
   SIGNAL o_v_poly_addr : integer RANGE 0 TO 2**FRAC-1;
-  SIGNAL o_h_poly_origin,o_h_poly_origin2,o_h_poly_origin3 : poly_phase_t;
-  SIGNAL o_v_poly_origin,o_v_poly_origin2,o_v_poly_origin3 : poly_phase_t;
-  SIGNAL o_poly_origin : poly_phase_t;
-  SIGNAL o_poly_adaptive,o_poly_adaptive2 : poly_phase_t;
-  SIGNAL o_poly_scaled : poly_phase_interp_t;
+  SIGNAL o_h_poly_phase_a,o_h_poly_phase_a2,o_h_poly_phase_a3 : poly_phase_t;
+  SIGNAL o_v_poly_phase_a,o_v_poly_phase_a2,o_v_poly_phase_a3 : poly_phase_t;
+  SIGNAL o_poly_phase_a : poly_phase_t;
+  SIGNAL o_poly_phase_b,o_poly_phase_b2 : poly_phase_t;
   SIGNAL o_v_poly_phase, o_h_poly_phase, o_poly_phase : poly_phase_interp_t;
   SIGNAL o_v_poly_pix, o_h_poly_pix : type_pix;
   SIGNAL poly_h_wr,poly_v_wr,poly_2_wr : std_logic;
@@ -1065,14 +1064,14 @@ ARCHITECTURE rtl OF ascal IS
     t1 := (a.t1 * ta) + (b.t1 * tb);
     t2 := (a.t2 * ta) + (b.t2 * tb);
     t3 := (a.t3 * ta) + (b.t3 * tb);
-	 
-	  -- 4.15 -> 3.15
-	  v.t0 := t0(17 DOWNTO 0);
-	  v.t1 := t1(17 DOWNTO 0);
-	  v.t2 := t2(17 DOWNTO 0);
-	  v.t3 := t3(17 DOWNTO 0);
-	 
-	  RETURN v;
+   
+    -- 4.15 -> 3.15
+    v.t0 := t0(17 DOWNTO 0);
+    v.t1 := t1(17 DOWNTO 0);
+    v.t2 := t2(17 DOWNTO 0);
+    v.t3 := t3(17 DOWNTO 0);
+   
+    RETURN v;
   END FUNCTION;
 
   FUNCTION poly_cvt(a : poly_phase_t) RETURN poly_phase_interp_t IS
@@ -2304,53 +2303,53 @@ BEGIN
 
       -- C1 / HC3 / VC4
       IF o_vmode(2 DOWNTO 0)="000" THEN -- Nearest neighbor
-        o_v_poly_origin<=poly_nn(vfrac_v);
+        o_v_poly_phase_a<=poly_nn(vfrac_v);
         IF o_v_poly_adaptive = '1' THEN
           o_poly_lum<=(OTHERS=>'0');
         END IF;
       ELSE -- Polyphase
-        o_v_poly_origin<=poly_unpack(o_v_poly_mem(o_v_poly_addr));
+        o_v_poly_phase_a<=poly_unpack(o_v_poly_mem(o_v_poly_addr));
         IF o_v_poly_adaptive = '1' THEN
-          o_poly_adaptive<=poly_unpack(o_a_poly_mem(o_v_poly_addr));
+          o_poly_phase_b<=poly_unpack(o_a_poly_mem(o_v_poly_addr));
           o_poly_lum<=o_v_poly_lum;
         END IF;
       END IF;
 
       IF o_hmode(2 DOWNTO 0)="000" THEN -- Nearest neighbor
-        o_h_poly_origin<=poly_nn(hfrac_v);
+        o_h_poly_phase_a<=poly_nn(hfrac_v);
         IF o_h_poly_adaptive = '1' THEN
           o_poly_lum<=(OTHERS=>'0');
         END IF;
       ELSE -- Polyphase
-        o_h_poly_origin<=poly_unpack(o_h_poly_mem(haddr_v));
+        o_h_poly_phase_a<=poly_unpack(o_h_poly_mem(haddr_v));
         IF o_h_poly_adaptive = '1' THEN
-          o_poly_adaptive<=poly_unpack(o_a_poly_mem(haddr_v));
+          o_poly_phase_b<=poly_unpack(o_a_poly_mem(haddr_v));
           o_poly_lum<=o_h_poly_lum;
         END IF;
       END IF;
 
       -- C2 / HC4 / VC5
-      o_h_poly_origin2<=o_h_poly_origin;
-      o_v_poly_origin2<=o_v_poly_origin;
-      o_poly_adaptive2<=o_poly_adaptive;
+      o_h_poly_phase_a2<=o_h_poly_phase_a;
+      o_v_poly_phase_a2<=o_v_poly_phase_a;
+      o_poly_phase_b2<=o_poly_phase_b;
 
       o_poly_lerp_ta<=signed(to_unsigned(256,10) - resize(o_poly_lum,10));
       o_poly_lerp_tb<=signed(resize(o_poly_lum,10));
 
       IF o_v_poly_adaptive = '1' THEN
-        o_poly_origin<=o_v_poly_origin;
+        o_poly_phase_a<=o_v_poly_phase_a;
       ELSIF o_h_poly_adaptive = '1' THEN
-        o_poly_origin<=o_h_poly_origin;
+        o_poly_phase_a<=o_h_poly_phase_a;
       END IF;
 
       -- C3 / HC5 / VC6
-      o_poly_phase<=poly_lerp(o_poly_origin, o_poly_adaptive2, o_poly_lerp_ta, o_poly_lerp_tb);
-      o_h_poly_origin3<=o_h_poly_origin2;
-      o_v_poly_origin3<=o_v_poly_origin2;
+      o_poly_phase<=poly_lerp(o_poly_phase_a, o_poly_phase_b2, o_poly_lerp_ta, o_poly_lerp_tb);
+      o_h_poly_phase_a3<=o_h_poly_phase_a2;
+      o_v_poly_phase_a3<=o_v_poly_phase_a2;
 
       -- C4 / HC6 / VC7
-      o_v_poly_phase<=poly_cvt(o_v_poly_origin3);
-      o_h_poly_phase<=poly_cvt(o_h_poly_origin3);
+      o_v_poly_phase<=poly_cvt(o_v_poly_phase_a3);
+      o_h_poly_phase<=poly_cvt(o_h_poly_phase_a3);
 
       IF o_v_poly_adaptive = '1' THEN
         o_v_poly_phase<=o_poly_phase;
@@ -2525,10 +2524,10 @@ BEGIN
 
       
       -- BILINEAR / SHARP BILINEAR ---------------
-      -- C2 : Pre-calc Sharp Bilinear
+      -- C4 : Pre-calc Sharp Bilinear
       o_h_sbil_t<=sbil_frac1(o_hfrac(2));
       
-      -- C3 : Select
+      -- C5 : Select
       o_h_bil_frac<=(OTHERS =>'0');
       IF o_hmode(0)='1' THEN -- Bilinear
         IF MASK(MASK_BILINEAR)='1' THEN
@@ -2540,26 +2539,26 @@ BEGIN
         END IF;
       END IF;
      
-      -- C4 : Opposite frac
-      o_h_bil_t<=bil_calc(o_h_bil_frac,o_hpixq1);
+      -- C6 : Opposite frac
+      o_h_bil_t<=bil_calc(o_h_bil_frac,o_hpixq3);
       
-      -- C5 : Bilinear / Sharp Bilinear
+      -- C7 : Bilinear / Sharp Bilinear
       o_h_bil_pix.r<=bound(o_h_bil_t.r,8+FRAC);
       o_h_bil_pix.g<=bound(o_h_bil_t.g,8+FRAC);
       o_h_bil_pix.b<=bound(o_h_bil_t.b,8+FRAC);
       
       -- BICUBIC -------------------------------------------
-      -- C3 : Bicubic coefficients A,B,C,D
-      -- C3 : Bicubic calc T1 = X.D + C
+      -- C5 : Bicubic coefficients A,B,C,D
+      -- C5 : Bicubic calc T1 = X.D + C
       o_h_bic_abcd1<=bic_calc0(o_hfrac(3),o_hpixq1);
       o_h_bic_tt1<=bic_calc1(o_hfrac(3),
                      bic_calc0(o_hfrac(3),o_hpixq1));
       
-      -- C4 : Bicubic calc T2 = X.T1 + B
+      -- C6 : Bicubic calc T2 = X.T1 + B
       o_h_bic_abcd2<=o_h_bic_abcd1;
       o_h_bic_tt2<=bic_calc2(o_hfrac(4),o_h_bic_tt1,o_h_bic_abcd1);
       
-      -- C5 : Bicubic final Y = X.T2 + A
+      -- C7 : Bicubic final Y = X.T2 + A
       o_h_bic_pix<=bic_calc3(o_hfrac(5),o_h_bic_tt2,o_h_bic_abcd2);
       
       -- POLYPHASE -----------------------------------------
@@ -2571,6 +2570,8 @@ BEGIN
       END IF;
 
       o_h_poly_lum<=poly_lum(hlumpix_v);
+
+      -- C3-C6 in PolyFetch
 
       -- C7 : Apply Polyphase
       o_h_poly_t<=poly_calc(o_h_poly_phase,o_hpixq4);
@@ -2762,6 +2763,8 @@ BEGIN
         END IF;
 
         o_v_poly_lum<=poly_lum(vlumpix_v);
+
+        -- C4-C7 in PolyFetch
 
         -- C8 : Apply Polyphase
         o_v_poly_t<=poly_calc(o_v_poly_phase,o_vpixq5);
