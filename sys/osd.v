@@ -21,8 +21,6 @@ module osd
 	output reg    osd_status
 );
 
-parameter  OSD_COLOR    =  3'd4;
-
 localparam OSD_WIDTH    = 12'd256;
 localparam OSD_HEIGHT   = 12'd64;
 
@@ -33,7 +31,8 @@ localparam OSD_HDR      = 12'd0;
 `endif
 
 reg        osd_enable;
-(* ramstyle="no_rw_check" *) reg  [7:0] osd_buffer[OSD_HDR ? (4096+1024) : 4096];
+(* ramstyle="no_rw_check" *) reg  [9:0] osd_buffer[OSD_HDR ? (4096+1024) : 4096];
+(* ramstyle="logic" *) reg [8:0] osd_palette[8];
 
 reg        info = 0;
 reg  [8:0] infoh;
@@ -80,6 +79,9 @@ always@(posedge clk_sys) begin
 					if(io_din[3]) highres <= 1;
 					bcnt <= {io_din[4:0], 8'h00};
 				end
+				if(io_din[7:5] == 'b100) begin
+					bcnt <= 0;
+				end
 			end else begin
 				// command 0x40: OSDCMDENABLE, OSDCMDDISABLE
 				if(cmd[7:4] == 4) begin
@@ -91,7 +93,10 @@ always@(posedge clk_sys) begin
 				end
 
 				// command 0x20: OSDCMDWRITE
-				if(cmd[7:5] == 'b001) osd_buffer[bcnt] <= io_din[7:0];
+				if(cmd[7:5] == 'b001) osd_buffer[bcnt] <= io_din[9:0];
+
+				// command 0x80: OSDCMDPALETTE
+				if(cmd[7:5] == 'b100) osd_palette[bcnt] <= {io_din[11:9],io_din[7:5],io_din[3:1]};
 
 				bcnt <= bcnt + 1'd1;
 			end
@@ -122,6 +127,9 @@ end
 
 reg  [2:0] osd_de;
 reg        osd_pixel;
+reg  [8:0] osd_fg;
+reg  [8:0] osd_bg;
+
 reg [21:0] v_cnt;
 reg        v_cnt_h, v_cnt_1, v_cnt_2, v_cnt_3, v_cnt_4;
 reg [21:0] v_osd_start_h, v_osd_start_1, v_osd_start_2, v_osd_start_3, v_osd_start_4, v_osd_start_5;
@@ -156,7 +164,8 @@ always @(posedge clk_video) begin
 	reg        deD;
 	reg  [2:0] osd_div;
 	reg  [2:0] multiscan;
-	reg  [7:0] osd_byte; 
+	reg  [7:0] osd_byte;
+	reg  [1:0] osd_color;
 	reg [23:0] h_cnt;
 	reg [21:0] dsp_width;
 	reg [21:0] osd_vcnt;
@@ -248,8 +257,10 @@ always @(posedge clk_video) begin
 			end
 		end
 
-		osd_byte  <= osd_buffer[rot[0] ? ({osd_hcnt2[6:3], osd_vcnt[7:0]} ^ { {4{~rot[1]}}, {8{rot[1]}} }) : {osd_vcnt[7:3], osd_hcnt[7:0]}];
+		{osd_color,osd_byte}  <= osd_buffer[rot[0] ? ({osd_hcnt2[6:3], osd_vcnt[7:0]} ^ { {4{~rot[1]}}, {8{rot[1]}} }) : {osd_vcnt[7:3], osd_hcnt[7:0]}];
 		osd_pixel <= osd_byte[rot[0] ? ((osd_hcnt2[2:0]-1'd1) ^ {3{~rot[1]}}) : osd_vcnt[2:0]];
+		osd_bg <= osd_palette[{osd_color,1'b0}];
+		osd_fg <= osd_palette[{osd_color,1'b1}];
 		osd_de[2:1] <= osd_de[1:0];
 	end
 end
@@ -265,9 +276,14 @@ always @(posedge clk_video) begin
 	reg hs1,hs2,hs3;
 
 	nrdout1 <= din;
-	ordout1 <= {{osd_pixel, osd_pixel, OSD_COLOR[2], din[23:19]},// 23:16
-	            {osd_pixel, osd_pixel, OSD_COLOR[1], din[15:11]},// 15:8
-	            {osd_pixel, osd_pixel, OSD_COLOR[0], din[7:3]}}; //  7:0
+	if (osd_pixel)
+		ordout1 <= {{osd_fg[8:6], din[23:19]},// 23:16
+					{osd_fg[5:3], din[15:11]},// 15:8
+					{osd_fg[2:0], din[7:3]}}; //  7:0
+	else
+		ordout1 <= {{osd_bg[8:6], din[23:19]},// 23:16
+					{osd_bg[5:3], din[15:11]},// 15:8
+					{osd_bg[2:0], din[7:3]}}; //  7:0
 
 	osd_mux <= ~osd_de[2];
 	rdout2  <= osd_mux ? nrdout1 : ordout1;
