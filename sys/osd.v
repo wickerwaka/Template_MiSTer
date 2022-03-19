@@ -31,7 +31,7 @@ localparam OSD_HDR      = 12'd0;
 `endif
 
 reg        osd_enable;
-(* ramstyle="no_rw_check" *) reg  [9:0] osd_buffer[OSD_HDR ? (4096+1024) : 4096];
+(* ramstyle="no_rw_check" *) reg  [9:0] osd_buffer[4][1024];
 (* ramstyle="logic" *) reg [8:0] osd_palette[8];
 
 reg        info = 0;
@@ -93,7 +93,7 @@ always@(posedge clk_sys) begin
 				end
 
 				// command 0x20: OSDCMDWRITE
-				if(cmd[7:5] == 'b001) osd_buffer[bcnt] <= io_din[9:0];
+				if(cmd[7:5] == 'b001) osd_buffer[bcnt[12:10]][bcnt[9:0]] <= io_din[9:0];
 
 				// command 0x80: OSDCMDPALETTE
 				if(cmd[7:5] == 'b100) osd_palette[bcnt] <= {io_din[11:9],io_din[7:5],io_din[3:1]};
@@ -164,8 +164,9 @@ always @(posedge clk_video) begin
 	reg        deD;
 	reg  [2:0] osd_div;
 	reg  [2:0] multiscan;
-	reg  [7:0] osd_byte;
+	reg  [9:0] osd_byte;
 	reg  [1:0] osd_color;
+	reg [12:0] osd_addr;
 	reg [23:0] h_cnt;
 	reg [21:0] dsp_width;
 	reg [21:0] osd_vcnt;
@@ -257,10 +258,11 @@ always @(posedge clk_video) begin
 			end
 		end
 
-		{osd_color,osd_byte}  <= osd_buffer[rot[0] ? ({osd_hcnt2[6:3], osd_vcnt[7:0]} ^ { {4{~rot[1]}}, {8{rot[1]}} }) : {osd_vcnt[7:3], osd_hcnt[7:0]}];
+		osd_addr <= rot[0] ? ({osd_hcnt2[6:3], osd_vcnt[7:0]} ^ { {4{~rot[1]}}, {8{rot[1]}} }) : {osd_vcnt[7:3], osd_hcnt[7:0]};
+		osd_byte <= osd_buffer[osd_addr[12:10]][osd_addr[9:0]];
 		osd_pixel <= osd_byte[rot[0] ? ((osd_hcnt2[2:0]-1'd1) ^ {3{~rot[1]}}) : osd_vcnt[2:0]];
-		osd_bg <= osd_palette[{osd_color,1'b0}];
-		osd_fg <= osd_palette[{osd_color,1'b1}];
+		osd_bg <= osd_palette[{osd_byte[9:8],1'b0}];
+		osd_fg <= osd_palette[{osd_byte[9:8],1'b1}];
 		osd_de[2:1] <= osd_de[1:0];
 	end
 end
