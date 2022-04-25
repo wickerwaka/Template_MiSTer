@@ -10,6 +10,8 @@ module hdmi_config
 	input [1:0] limited,
 	input       ypbpr,
 
+	input       repetition,
+
 	output reg  done,
 
 	//	I2C Side
@@ -23,6 +25,8 @@ wire       mI2C_END;
 wire       mI2C_ACK;
 reg [15:0] LUT_DATA;
 reg  [7:0] LUT_INDEX = 0;
+
+reg        repetition_latched;
 
 i2c #(50_000_000, 20_000) i2c_av
 (
@@ -50,6 +54,8 @@ always@(posedge iCLK or negedge iRST_N) begin
 		mSetup_ST	<=	0;
 		mI2C_GO		<=	0;
 		done        <= 0;
+
+		repetition_latched <= repetition;
 	end else begin
 		if(init_data[LUT_INDEX] != 16'hFFFF) begin
 			case(mSetup_ST)
@@ -67,7 +73,14 @@ always@(posedge iCLK or negedge iRST_N) begin
 				end
 			endcase
 		end
-		else done <= 1;
+		else begin
+			done <= 1;
+
+			if(repetition_latched != repetition) begin
+				repetition_latched <= repetition;
+				LUT_INDEX <= LUT_INDEX - 8'd1;
+			end
+		end
 	end
 end
 
@@ -137,9 +150,6 @@ wire [15:0] init_data[85] =
 	{8'h2D, ypbpr ? 8'hDF : limited[0] ? 8'hBC : 8'hFE},
 	{8'h2E, ypbpr ? 8'h07 : 8'h01},
 	{8'h2F, ypbpr ? 8'hE7 : 8'h00},
-
-	{8'h3B, 8'b0100_0000},	// Pixel repetition [6:5] b00 AUTO. [4:3] b00 x1 mult of input clock. [2:1] b00 x1 pixel rep to send to HDMI Rx.
-									// Pixel repetition set to manual to avoid VIC auto detection as defined in ADV7513 Programming Guide (Skooter)
 
 	16'h4000,					// General Control Packet Enable
 
@@ -241,6 +251,9 @@ wire [15:0] init_data[85] =
 	16'h0701,					//
 	16'h0822,					// Set CTS Value 74250
 	16'h090A,					//
+
+	// Reconfigurable = LUT_INDEX - 1
+	{8'h3B, 4'b0110, repetition_latched, 3'b000},	// Pixel repetition [6:5] b00 AUTO. [4:3] b00 x1 mult of input clock. [2:1] b00 x1 pixel rep to send to HDMI Rx.
 
 	16'hFFFF 				   // END
 };

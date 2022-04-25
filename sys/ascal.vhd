@@ -1219,11 +1219,11 @@ BEGIN
         
         IF i_iauto='1' THEN
           -- Auto-size
-          i_hmin<=0;
-          i_hmax<=i_himax;
-          i_vmin<=0;
+          i_hmin<=himin;
+          i_hmax<=i_himax-himax;
+          i_vmin<=vimin;
           IF i_pvs='1' AND i_vs_pre='0' AND (i_inter='0' OR i_pfl='0') THEN
-            i_vmax<=i_vimax;
+            i_vmax<=i_vimax-vimax;
           END IF;
         ELSE
           -- Forced image

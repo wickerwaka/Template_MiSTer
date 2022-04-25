@@ -108,6 +108,10 @@ module hps_io #(parameter CONF_STR, CONF_STR_BRAM=1, PS2DIV=0, WIDE=0, VDNUM=1, 
 
 	//toggle to force notify of video mode change
 	input             new_vmode,
+	
+	input      [11:0] VIDEO_ARX,
+	input      [11:0] VIDEO_ARY,
+	input             VIDEO_AR_PIXEL,
 
 	inout      [21:0] gamma_bus,
 
@@ -225,6 +229,10 @@ video_calc video_calc
 	.f1(HPS_BUS[45]),
 	.new_vmode(new_vmode),
 	.video_rotated(video_rotated),
+
+	.arx(VIDEO_ARX),
+	.ary(VIDEO_ARY),
+	.ar_pixel(VIDEO_AR_PIXEL),
 
 	.par_num(byte_cnt[3:0]),
 	.dout(vc_dout)
@@ -864,37 +872,44 @@ module video_calc
 	input new_vmode,
 	input video_rotated,
 
+	input ar_pixel,
+	input [11:0] arx,
+	input [11:0] ary,
+
 	input       [3:0] par_num,
 	output reg [15:0] dout
 );
 
 always @(posedge clk_sys) begin
 	case(par_num)
-		1: dout <= {video_rotated, |vid_int, vid_nres};
-		2: dout <= vid_hcnt[15:0];
-		3: dout <= vid_hcnt[31:16];
-		4: dout <= vid_vcnt[15:0];
-		5: dout <= vid_vcnt[31:16];
-		6: dout <= vid_htime[15:0];
-		7: dout <= vid_htime[31:16];
-		8: dout <= vid_vtime[15:0];
-		9: dout <= vid_vtime[31:16];
-	  10: dout <= vid_pix[15:0];
-	  11: dout <= vid_pix[31:16];
-	  12: dout <= vid_vtime_hdmi[15:0];
-	  13: dout <= vid_vtime_hdmi[31:16];
+		1: dout <= {4'b1000, ar_pixel, video_rotated, |vid_int, vid_stable, vid_nres};
+ 		2: dout <= vid_hcnt[15:0];
+		3: dout <= vid_vcnt[15:0];
+		4: dout <= vid_arx[11:0];
+		5: dout <= vid_ary[11:0];
+ 		6: dout <= vid_htime[15:0];
+ 		7: dout <= vid_htime[31:16];
+ 		8: dout <= vid_vtime[15:0];
+ 		9: dout <= vid_vtime[31:16];
+	   10: dout <= vid_pix[15:0];
+	   11: dout <= vid_pix[31:16];
+	   12: dout <= vid_vtime_hdmi[15:0];
+	   13: dout <= vid_vtime_hdmi[31:16];
 	  default dout <= 0;
 	endcase
 end
 
-reg [31:0] vid_hcnt = 0;
-reg [31:0] vid_vcnt = 0;
+reg [15:0] vid_hcnt = 0;
+reg [15:0] vid_vcnt = 0;
+reg [11:0] vid_arx = 0;
+reg [11:0] vid_ary = 0;
 reg  [7:0] vid_nres = 0;
+reg        vid_stable = 0;
 reg  [1:0] vid_int  = 0;
 
 always @(posedge clk_vid) begin
-	integer hcnt;
-	integer vcnt;
+	reg [15:0] hcnt;
+	reg [15:0] vcnt;
 	reg old_vs= 0, old_de = 0, old_vmode = 0;
 	reg [3:0] resto = 0;
 	reg calch = 0;
@@ -903,8 +918,8 @@ always @(posedge clk_vid) begin
 		old_vs <= vs;
 		old_de <= de;
 
-		if(~vs & ~old_de & de) vcnt <= vcnt + 1;
-		if(calch & de) hcnt <= hcnt + 1;
+		if(~vs & ~old_de & de) vcnt <= vcnt + 16'd1;
+		if(calch & de) hcnt <= hcnt + 16'd1;
 		if(old_de & ~de) calch <= 0;
 
 		if(old_vs & ~vs) begin
@@ -915,10 +930,17 @@ always @(posedge clk_vid) begin
 
 					//report new resolution after timeout
 					if(resto) resto <= resto + 1'd1;
-					if(vid_hcnt != hcnt || vid_vcnt != vcnt || old_vmode != new_vmode) resto <= 1;
-					if(&resto) vid_nres <= vid_nres + 1'd1;
+					if(vid_hcnt != hcnt || vid_vcnt != vcnt || old_vmode != new_vmode || vid_arx != arx || vid_ary != ary) begin
+						resto <= 1;
+						vid_nres <= vid_nres + 1'd1;
+						vid_stable <= 0;
+					end else if(&resto) begin
+						vid_stable <= 1;
+					end
 					vid_hcnt <= hcnt;
 					vid_vcnt <= vcnt;
+					vid_arx <= arx;
+					vid_ary <= ary;
 				end
 				vcnt <= 0;
 				hcnt <= 0;

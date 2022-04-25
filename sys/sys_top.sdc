@@ -31,7 +31,6 @@ set_false_path -to   [get_ports {AUDIO_R}]
 set_false_path -to   {cfg[*]}
 set_false_path -from {cfg[*]}
 set_false_path -from {VSET[*]}
-set_false_path -to   {wcalc[*] hcalc[*]}
 set_false_path -to {hdmi_width[*] hdmi_height[*]}
 
 set_multicycle_path -to {*_osd|osd_vcnt*} -setup 2
@@ -54,7 +53,7 @@ set_false_path -to   {FB_BASE[*] FB_BASE[*] FB_WIDTH[*] FB_HEIGHT[*] LFB_HMIN[*]
 set_false_path -from {FB_BASE[*] FB_BASE[*] FB_WIDTH[*] FB_HEIGHT[*] LFB_HMIN[*] LFB_HMAX[*] LFB_VMIN[*] LFB_VMAX[*]}
 set_false_path -to   {vol_att[*] scaler_flt[*] led_overtake[*] led_state[*]}
 set_false_path -from {vol_att[*] scaler_flt[*] led_overtake[*] led_state[*]}
-set_false_path -from {aflt_* acx* acy* areset* arc*}
+set_false_path -from {aflt_* acx* acy* areset*}
 set_false_path -from {vs_line*}
 
 set_false_path -from {ascal|o_ihsize*}

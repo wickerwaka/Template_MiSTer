@@ -299,9 +299,7 @@ reg  [11:0] coef_addr;
 reg  [9:0] coef_data;
 reg        coef_wr = 0;
 
-wire[12:0] ARX, ARY;
 reg [11:0] VSET = 0, HSET = 0;
-reg        FREESCALE = 0;
 reg  [2:0] scaler_flt;
 reg        lowlat = 0;
 reg        cfg_dis = 0;
@@ -320,10 +318,6 @@ reg [23:0] acy0 = -24'd6216759;
 reg [23:0] acy1 =  24'd6143386;
 reg [23:0] acy2 = -24'd2023767;
 reg        areset = 0;
-reg [12:0] arc1x = 0;
-reg [12:0] arc1y = 0;
-reg [12:0] arc2x = 0;
-reg [12:0] arc2y = 0;
 
 always@(posedge clk_sys) begin
 	reg  [7:0] cmd;
@@ -377,7 +371,7 @@ always@(posedge clk_sys) begin
 				cfg_set <= 0;
 				if(cnt<8) begin
 					case(cnt[2:0])
-						0: WIDTH      <= io_din[11:0];
+						0: {PR,WIDTH} <= {io_din[15], io_din[11:0]};
 						1: HFP        <= io_din[11:0];
 						2: HS         <= {io_din[15], io_din[11:0]};
 						3: HBP        <= io_din[11:0];
@@ -427,7 +421,7 @@ always@(posedge clk_sys) begin
 				else coef_addr <= io_din[11:0];
 			end
 			if(cmd == 'h2B) scaler_flt <= io_din[2:0];
-			if(cmd == 'h37) {FREESCALE,HSET} <= {io_din[15],io_din[11:0]};
+			if(cmd == 'h37) HSET <= io_din[11:0];
 			if(cmd == 'h38) vs_line <= io_din[11:0];
 			if(cmd == 'h39) begin
 				case(cnt[3:0])
@@ -448,16 +442,22 @@ always@(posedge clk_sys) begin
 					14: acy2[23:16]      <= io_din[7:0];
 				endcase
 			end
-			if(cmd == 'h3A) begin
-				case(cnt[3:0])
-					 0: arc1x <= io_din[12:0];
-					 1: arc1y <= io_din[12:0];
-					 2: arc2x <= io_din[12:0];
-					 3: arc2y <= io_din[12:0];
-				endcase
-			end
 `ifndef MISTER_DEBUG_NOHDMI
 			if(cmd == 'h3E) {shadowmask_wr,shadowmask_data} <= {1'b1, io_din};
+
+			if(cmd == 'h3F) begin
+				case(cnt[3:0])
+					0: GEO_EN    <= io_din[0];
+					1: GEO_OHMIN <= io_din[11:0];
+					2: GEO_OHMAX <= io_din[11:0];
+					3: GEO_OVMIN <= io_din[11:0];
+					4: GEO_OVMAX <= io_din[11:0];
+					5: GEO_IHMIN <= io_din[11:0];
+					6: GEO_IHMAX <= io_din[11:0];
+					7: GEO_IVMIN <= io_din[11:0];
+					8: GEO_IVMAX <= io_din[11:0];
+				endcase
+			end
 `endif
 		end
 	end
@@ -667,10 +667,10 @@ ascal
 	.i_fl     (f1),
 	.i_de     (hde_emu),
 	.iauto    (1),
-	.himin    (0),
-	.himax    (0),
-	.vimin    (0),
-	.vimax    (0),
+	.himin    (himin),
+	.himax    (himax),
+	.vimin    (vimin),
+	.vimax    (vimax),
 
 	.o_clk    (clk_hdmi),
 	.o_ce     (scaler_out),
@@ -780,123 +780,70 @@ reg fb_vbl;
 always @(posedge clk_vid) fb_vbl <= hdmi_vbl;
 `endif
 
-reg  ar_md_start;
-wire ar_md_busy;
-reg  [11:0] ar_md_mul1, ar_md_mul2, ar_md_div;
-wire [11:0] ar_md_res;
-
-sys_umuldiv #(12,12,12) ar_muldiv
-(
-	.clk(clk_vid),
-	.start(ar_md_start),
-	.busy(ar_md_busy),
-
-	.mul1(ar_md_mul1),
-	.mul2(ar_md_mul2),
-	.div(ar_md_div),
-	.result(ar_md_res)
-);
+reg        GEO_EN = 0;
+reg [11:0] GEO_OHMIN;
+reg [11:0] GEO_OHMAX;
+reg [11:0] GEO_OVMIN;
+reg [11:0] GEO_OVMAX;
+reg [11:0] GEO_IHMIN;
+reg [11:0] GEO_IHMAX;
+reg [11:0] GEO_IVMIN;
+reg [11:0] GEO_IVMAX;
 
 reg [11:0] hmin;
 reg [11:0] hmax;
 reg [11:0] vmin;
 reg [11:0] vmax;
+
+reg [11:0] himin;
+reg [11:0] himax;
+reg [11:0] vimin;
+reg [11:0] vimax;
+
 reg [11:0] hdmi_height;
 reg [11:0] hdmi_width;
 
 always @(posedge clk_vid) begin
 	reg [11:0] hmini,hmaxi,vmini,vmaxi;
-	reg [11:0] wcalc,videow,arx;
-	reg [11:0] hcalc,videoh,ary;
-	reg  [2:0] state;
-	reg        xy;
+	reg [11:0] himini,himaxi,vimini,vimaxi;
 
 	hdmi_height <= (VSET && (VSET < HEIGHT)) ? VSET : HEIGHT;
 	hdmi_width  <= (HSET && (HSET < WIDTH))  ? HSET : WIDTH;
 
-	if(!ARY) begin
-		if(ARX == 1) begin
-			arx <= arc1x[11:0];
-			ary <= arc1y[11:0];
-			xy  <= arc1x[12] | arc1y[12];
-		end
-		else if(ARX == 2) begin
-			arx <= arc2x[11:0];
-			ary <= arc2y[11:0];
-			xy  <= arc2x[12] | arc2y[12];
-		end
-		else begin
-			arx <= 0;
-			ary <= 0;
-			xy  <= 0;
-		end
+	himini <= 0; himaxi <= 0;
+	vimini <= 0; vimaxi <= 0;
+	if(LFB_EN) begin
+		hmini <= LFB_HMIN;
+		vmini <= LFB_VMIN;
+		hmaxi <= LFB_HMAX;
+		vmaxi <= LFB_VMAX;
+	end
+	else if(GEO_EN) begin
+		hmini <= GEO_OHMIN;
+		vmini <= GEO_OVMIN;
+		hmaxi <= GEO_OHMAX;
+		vmaxi <= GEO_OVMAX;
+		himini <= GEO_IHMIN;
+		vimini <= GEO_IVMIN;
+		himaxi <= GEO_IHMAX;
+		vimaxi <= GEO_IVMAX;
 	end
 	else begin
-		arx <= ARX[11:0];
-		ary <= ARY[11:0];
-		xy  <= ARX[12] | ARY[12];
+		hmini <= 0;
+		vmini <= 0;
+		hmaxi <= hdmi_width - 12'd1;
+		vmaxi <= hdmi_height - 12'd1;
 	end
-	
-	ar_md_start <= 0;
-	state <= state + 1'd1;
-	case(state)
-		0: if(LFB_EN) begin
-				hmini <= LFB_HMIN;
-				vmini <= LFB_VMIN;
-				hmaxi <= LFB_HMAX;
-				vmaxi <= LFB_VMAX;
-				state <= 0;
-			end
-			else if(FREESCALE || !arx || !ary) begin
-				wcalc <= hdmi_width;
-				hcalc <= hdmi_height;
-				state <= 6;
-			end
-			else if(xy) begin
-				wcalc <= arx;
-				hcalc <= ary;
-				state <= 6;
-			end
-
-		1: begin
-				ar_md_mul1 <= hdmi_height;
-				ar_md_mul2 <= arx;
-				ar_md_div  <= ary;
-				ar_md_start<= 1;
-			end
-		2: begin
-				wcalc <= ar_md_res;
-				if(ar_md_start | ar_md_busy) state <= 2;
-			end
-
-		3: begin
-				ar_md_mul1 <= hdmi_width;
-				ar_md_mul2 <= ary;
-				ar_md_div  <= arx;
-				ar_md_start<= 1;
-			end
-		4: begin
-				hcalc <= ar_md_res;
-				if(ar_md_start | ar_md_busy) state <= 4;
-			end
-
-		6: begin
-				videow <= (wcalc > hdmi_width)  ? hdmi_width  : wcalc[11:0];
-				videoh <= (hcalc > hdmi_height) ? hdmi_height : hcalc[11:0];
-			end
-
-		7: begin
-				hmini <= ((WIDTH  - videow)>>1);
-				hmaxi <= ((WIDTH  - videow)>>1) + videow - 1'd1;
-				vmini <= ((HEIGHT - videoh)>>1);
-				vmaxi <= ((HEIGHT - videoh)>>1) + videoh - 1'd1;
-			end
-	endcase
 	
 	hmin <= hmini;
 	hmax <= hmaxi;
 	vmin <= vmini;
 	vmax <= vmaxi;
+
+	himin <= himini;
+	himax <= himaxi;
+	vimin <= vimini;
+	vimax <= vimaxi;
 end
 
 `ifndef MISTER_DEBUG_NOHDMI
@@ -963,6 +910,8 @@ reg  [11:0] HEIGHT = 1080;
 reg  [11:0] VFP    = 4;
 reg  [12:0] VS     = 5;
 reg  [11:0] VBP    = 36;
+
+reg         PR     = 0; // HDMI pixel repeat
 
 wire [63:0] reconfig_to_pll;
 wire [63:0] reconfig_from_pll;
@@ -1048,7 +997,8 @@ hdmi_config hdmi_config
 	.dvi_mode(dvi_mode),
 	.audio_96k(audio_96k),
 	.limited(hdmi_limited),
-	.ypbpr(ypbpr_en & direct_video)
+	.ypbpr(ypbpr_en & direct_video),
+	.repetition(PR)
 );
 
 assign HDMI_I2C_SCL = hdmi_scl_en ? 1'b0 : 1'bZ;
@@ -1567,8 +1517,6 @@ emu emu
 	.CLK_VIDEO(clk_vid),
 	.CE_PIXEL(ce_pix),
 	.VGA_SL(scanlines),
-	.VIDEO_ARX(ARX),
-	.VIDEO_ARY(ARY),
 
 `ifdef MISTER_FB
 	.FB_EN(fb_en),
